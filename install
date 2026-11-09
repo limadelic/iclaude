@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+src=$(cd "$(dirname "$0")" && pwd)
+bin="$HOME/.local/bin"
+launcher="$bin/claude-stable-exec"
+settings="$HOME/.claude/settings.json"
+mkdir -p "$bin" "$HOME/.claude"
+cp "$src/claude-stable-exec" "$launcher"
+chmod +x "$launcher"
+if [ -f "$settings" ]; then
+  cp "$settings" "$settings.bak-claudestable"
+else
+  printf '{"env":{}}\n' > "$settings"
+fi
+plutil -convert xml1 -s -o /dev/null "$settings"
+if ! plutil -type env "$settings" >/dev/null 2>&1; then
+  plutil -insert env -dictionary "$settings"
+fi
+plutil -replace env.CLAUDE_CODE_PROCESS_WRAPPER -string "$launcher" "$settings"
+plutil -convert xml1 -s -o /dev/null "$settings"
+echo "Restart claude and its daemon (claude daemon stop --any) to take effect."

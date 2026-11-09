@@ -1,0 +1,9 @@
+#!/bin/sh
+settings="$HOME/.claude/settings.json"
+share="$HOME/.local/share"
+echo "link: $(readlink "$HOME/.local/bin/claude")"
+echo "stable version: $(cat "$share/claude/stable/version" 2>/dev/null)"
+echo "wrapper: $(plutil -extract env.CLAUDE_CODE_PROCESS_WRAPPER raw -o - "$settings" 2>/dev/null)"
+claude daemon status 2>/dev/null | grep 'launcher:'
+echo "processes from stable: $(ps -axo command | grep "$share/claude/stable/claude" | grep -vc grep)"
+echo "processes from versions: $(ps -axo command | grep "$share/claude/versions/" | grep -vc grep)"

@@ -1,0 +1,14 @@
+#!/bin/sh
+d="$HOME/.local/share/claude/stable"
+cur=$(readlink "$HOME/.local/bin/claude")
+hops=${CLAUDE_STABLE_HOPS:-0}
+if [ -n "$cur" ] && [ "$1" -ef "$cur" ] && [ "$CLAUDE_STABLE_PID" != "$$" ] && [ "$hops" -lt 20 ]; then
+  if [ "$(cat "$d/version" 2>/dev/null)" != "$cur" ]; then
+    mkdir -p "$d" && cp -c "$cur" "$d/claude.$$" && mv -f "$d/claude.$$" "$d/claude" && echo "$cur" > "$d/version"
+  fi
+  if [ "$(cat "$d/version" 2>/dev/null)" = "$cur" ] && [ -x "$d/claude" ]; then
+    shift
+    CLAUDE_STABLE_PID=$$ CLAUDE_STABLE_HOPS=$((hops+1)) exec "$d/claude" "$@"
+  fi
+fi
+exec "$@"

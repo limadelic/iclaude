@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+launcher="$HOME/.local/bin/claude-stable-exec"
+stable="$HOME/.local/share/claude/stable"
+settings="$HOME/.claude/settings.json"
+dest="/tmp/claudestable-$(date +%Y%m%d-%H%M%S)"
+if [ -f "$settings" ] && plutil -extract env.CLAUDE_CODE_PROCESS_WRAPPER raw -o /dev/null "$settings" 2>/dev/null; then
+  plutil -remove env.CLAUDE_CODE_PROCESS_WRAPPER "$settings"
+fi
+if [ -e "$launcher" ] || [ -e "$stable" ]; then
+  mkdir -p "$dest"
+fi
+if [ -e "$launcher" ]; then
+  mv "$launcher" "$dest/"
+fi
+if [ -e "$stable" ]; then
+  mv "$stable" "$dest/"
+fi
+echo "Restart claude and its daemon (claude daemon stop --any) to take effect."
