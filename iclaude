@@ -140,10 +140,6 @@ help|-h)
   usage
   ;;
 *)
-  if [ -f "$1" ] && [ -x "$1" ]; then
-    launch "$@"
-  fi
-  usage >&2
-  exit 2
+  launch "$@"
   ;;
 esac
