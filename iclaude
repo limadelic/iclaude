@@ -1,0 +1,149 @@
+#!/bin/sh
+data="${XDG_DATA_HOME:-$HOME/.local/share}/iclaude"
+settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+js=$(cat <<'JS'
+ObjC.import('Foundation');
+function read(path) {
+  const err = Ref();
+  const text = $.NSString.stringWithContentsOfFileEncodingError($(path), $.NSUTF8StringEncoding, err);
+  if (!text) throw new Error('cannot read ' + path + ': ' + ObjC.unwrap(err[0].localizedDescription));
+  return ObjC.unwrap(text);
+}
+function write(path, text) {
+  const err = Ref();
+  if (!$(text).writeToFileAtomicallyEncodingError($(path), true, $.NSUTF8StringEncoding, err))
+    throw new Error('cannot write ' + path + ': ' + ObjC.unwrap(err[0].localizedDescription));
+}
+function exists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath($(path));
+}
+function isObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+function load(path) {
+  if (!exists(path)) return { text: null, obj: {} };
+  const text = read(path);
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch (e) {
+    throw new Error(path + ' is not valid JSON, nothing changed');
+  }
+  if (!isObject(obj)) throw new Error(path + ' is not a JSON object, nothing changed');
+  return { text: text, obj: obj };
+}
+function run(argv) {
+  const mode = argv[0], settings = argv[1];
+  if (mode === 'get') {
+    if (!exists(settings)) return '';
+    try {
+      const env = JSON.parse(read(settings)).env;
+      const value = env && env.CLAUDE_CODE_PROCESS_WRAPPER;
+      return typeof value === 'string' ? value : '';
+    } catch (e) {
+      return '';
+    }
+  }
+  const loaded = load(settings), obj = loaded.obj;
+  if (mode === 'on') {
+    if (obj.env === undefined) obj.env = {};
+    if (!isObject(obj.env)) throw new Error(settings + ' has a non-object "env", nothing changed');
+    obj.env.CLAUDE_CODE_PROCESS_WRAPPER = argv[2];
+    if (loaded.text !== null) write(argv[3], loaded.text);
+  } else {
+    const env = obj.env;
+    if (!isObject(env) || !('CLAUDE_CODE_PROCESS_WRAPPER' in env)) return;
+    delete env.CLAUDE_CODE_PROCESS_WRAPPER;
+    if (Object.keys(env).length === 0) delete obj.env;
+  }
+  write(settings, JSON.stringify(obj, null, 2) + "\n");
+}
+JS
+)
+
+usage() {
+  cat <<'EOF'
+usage: iclaude [on | off | status | help]
+  on      pin claude to one path and set the wrapper
+  off     remove the wrapper and move the pinned copy to the temp folder
+  status  show the state
+EOF
+}
+
+self_path() {
+  p=$1
+  case $p in */*) ;; *) p=$(command -v "$p") ;; esac
+  [ -n "$p" ] || return 1
+  d=$(cd "$(dirname "$p")" 2>/dev/null && pwd) || return 1
+  printf '%s/%s\n' "$d" "$(basename "$p")"
+}
+
+is_claude() {
+  for c in "$HOME/.local/bin/claude" "$(command -v claude 2>/dev/null)"; do
+    [ -n "$c" ] || continue
+    r=$(realpath "$c" 2>/dev/null) || continue
+    [ -n "$r" ] && [ "$1" -ef "$r" ] && return 0
+  done
+  case $1 in
+    */claude/versions/*|*/Caskroom/claude-code/*) return 0 ;;
+  esac
+  return 1
+}
+
+launch() {
+  hops=${ICLAUDE_HOPS:-0}
+  src=$(realpath "$1" 2>/dev/null)
+  if [ -n "$src" ] && is_claude "$src" && [ "${ICLAUDE_PID:-}" != "$$" ] && [ "$hops" -lt 20 ]; then
+    if [ "$(cat "$data/source" 2>/dev/null)" != "$src" ] || [ ! -x "$data/claude" ]; then
+      mkdir -p "$data" && { cp -c "$src" "$data/claude.$$" 2>/dev/null || cp "$src" "$data/claude.$$"; } && mv -f "$data/claude.$$" "$data/claude" && printf '%s\n' "$src" > "$data/source"
+    fi
+    if [ "$(cat "$data/source" 2>/dev/null)" = "$src" ] && [ -x "$data/claude" ]; then
+      shift
+      exec env ICLAUDE_PID=$$ ICLAUDE_HOPS=$((hops+1)) "$data/claude" "$@"
+    fi
+  fi
+  exec "$@"
+}
+
+case ${1:-status} in
+on)
+  self=$(self_path "$0") || { echo "iclaude: cannot find my own path" >&2; exit 1; }
+  mkdir -p "$(dirname "$settings")" || exit 1
+  osascript -l JavaScript -e "$js" on "$settings" "$self" "$settings.bak-iclaude" || exit 1
+  echo "iclaude is on. Restart claude. If background sessions run, stop the daemon when they are idle: claude daemon stop"
+  ;;
+off)
+  osascript -l JavaScript -e "$js" off "$settings" || exit 1
+  if [ -e "$data" ]; then
+    mv "$data" "${TMPDIR:-/tmp}/iclaude-$(date +%Y%m%d-%H%M%S)" || exit 1
+  fi
+  echo "iclaude is off. Restart claude."
+  ;;
+status)
+  w=$(osascript -l JavaScript -e "$js" get "$settings" 2>/dev/null)
+  case $w in
+    */iclaude) s=on ;;
+    *) s=off ;;
+  esac
+  echo "state: $s"
+  echo "wrapper: $w"
+  c=$(command -v claude 2>/dev/null)
+  [ -n "$c" ] || c=$HOME/.local/bin/claude
+  echo "claude: $(realpath "$c" 2>/dev/null)"
+  echo "pinned: $(cat "$data/source" 2>/dev/null)"
+  echo "processes pinned: $(ps -axo command= | awk -v p="$data/claude" 'index($0, p) == 1 { n++ } END { print n + 0 }')"
+  echo "processes unpinned: $(ps -axo command= | awk '$0 ~ /^[^ ]*\/(claude\/versions|Caskroom\/claude-code)\// { n++ } END { print n + 0 }')"
+  claude daemon status 2>/dev/null | grep 'launcher:'
+  exit 0
+  ;;
+help|-h)
+  usage
+  ;;
+*)
+  if [ -f "$1" ] && [ -x "$1" ]; then
+    launch "$@"
+  fi
+  usage >&2
+  exit 2
+  ;;
+esac
