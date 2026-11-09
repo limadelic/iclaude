@@ -1,9 +1,24 @@
 #!/bin/sh
 settings="$HOME/.claude/settings.json"
 share="$HOME/.local/share"
+js=$(cat <<'JS'
+ObjC.import('Foundation');
+function run(argv) {
+  try {
+    const err = Ref();
+    const text = $.NSString.stringWithContentsOfFileEncodingError($(argv[0]), $.NSUTF8StringEncoding, err);
+    const env = JSON.parse(ObjC.unwrap(text)).env;
+    const value = env && env.CLAUDE_CODE_PROCESS_WRAPPER;
+    return typeof value === 'string' ? value : '';
+  } catch (e) {
+    return '';
+  }
+}
+JS
+)
 echo "link: $(readlink "$HOME/.local/bin/claude")"
 echo "stable version: $(cat "$share/claude/stable/version" 2>/dev/null)"
-echo "wrapper: $(plutil -extract env.CLAUDE_CODE_PROCESS_WRAPPER raw -o - "$settings" 2>/dev/null)"
+echo "wrapper: $(osascript -l JavaScript -e "$js" "$settings" 2>/dev/null)"
 claude daemon status 2>/dev/null | grep 'launcher:'
 echo "processes from stable: $(ps -axo command | grep "$share/claude/stable/claude" | grep -vc grep)"
 echo "processes from versions: $(ps -axo command | grep "$share/claude/versions/" | grep -vc grep)"

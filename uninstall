@@ -4,9 +4,30 @@ launcher="$HOME/.local/bin/claude-stable-exec"
 stable="$HOME/.local/share/claude/stable"
 settings="$HOME/.claude/settings.json"
 dest="/tmp/claudestable-$(date +%Y%m%d-%H%M%S)"
-if [ -f "$settings" ] && plutil -extract env.CLAUDE_CODE_PROCESS_WRAPPER raw -o /dev/null "$settings" 2>/dev/null; then
-  plutil -remove env.CLAUDE_CODE_PROCESS_WRAPPER "$settings"
-fi
+js=$(cat <<'JS'
+ObjC.import('Foundation');
+function run(argv) {
+  const settings = argv[0];
+  if (!$.NSFileManager.defaultManager.fileExistsAtPath($(settings))) return;
+  const err = Ref();
+  const text = $.NSString.stringWithContentsOfFileEncodingError($(settings), $.NSUTF8StringEncoding, err);
+  if (!text) throw new Error('cannot read ' + settings + ': ' + ObjC.unwrap(err[0].localizedDescription));
+  let obj;
+  try {
+    obj = JSON.parse(ObjC.unwrap(text));
+  } catch (e) {
+    throw new Error(settings + ' is not valid JSON, nothing changed');
+  }
+  const env = obj && obj.env;
+  if (!env || typeof env !== 'object' || !('CLAUDE_CODE_PROCESS_WRAPPER' in env)) return;
+  delete env.CLAUDE_CODE_PROCESS_WRAPPER;
+  const out = $(JSON.stringify(obj, null, 2) + "\n");
+  if (!out.writeToFileAtomicallyEncodingError($(settings), true, $.NSUTF8StringEncoding, err))
+    throw new Error('cannot write ' + settings + ': ' + ObjC.unwrap(err[0].localizedDescription));
+}
+JS
+)
+osascript -l JavaScript -e "$js" "$settings"
 if [ -e "$launcher" ] || [ -e "$stable" ]; then
   mkdir -p "$dest"
 fi
